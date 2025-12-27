@@ -2,6 +2,8 @@
 
 A web application for creating and managing AI video generation jobs using OpenAI Sora and Google Veo.
 
+<img width="1206" height="856" alt="Screenshot 2025-12-27 at 12 25 43 PM" src="https://github.com/user-attachments/assets/8d4d3623-33ac-4e70-971c-166c7ad0f50d" />
+
 ## Features
 
 - **Multi-Provider Support**: Generate videos using OpenAI Sora or Google Veo
