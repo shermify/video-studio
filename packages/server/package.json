@@ -1,0 +1,27 @@
+{
+  "name": "@video-studio/server",
+  "version": "1.0.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file ./.env --watch ./src/index.ts",
+    "migrate": "yarn dlx prisma migrate dev --name init"
+  },
+  "dependencies": {
+    "@google/genai": "^1.34.0",
+    "@prisma/adapter-pg": "^7.2.0",
+    "@prisma/client": "^7.2.0",
+    "@video-studio/types": "workspace:^",
+    "fastify": "^5.6.2",
+    "fastify-sse-v2": "^4.2.1",
+    "pg": "^8.16.3",
+    "prisma": "^7.2.0",
+    "undici": "^7.16.0",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "@types/pg": "^8.16.0",
+    "tsx": "^4.21.0"
+  }
+}

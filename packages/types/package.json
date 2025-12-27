@@ -1,0 +1,9 @@
+{
+  "name": "@video-studio/types",
+  "version": "1.0.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "yarn tsc"
+  }
+}

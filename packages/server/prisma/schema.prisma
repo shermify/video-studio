@@ -1,0 +1,24 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model VideoJob {
+  id            String   @id @default(uuid())
+  provider      String   // "sora" | "veo"
+  providerJobId String?  @map("provider_job_id")
+  status        String   @default("queued") // queued/running/succeeded/failed/canceled/unknown
+  progressPct   Int?     @map("progress_pct")
+  prompt        String
+  paramsJson    Json?    @map("params_json")
+  outputsJson   Json?    @map("outputs_json")
+  errorJson     Json?    @map("error_json")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("video_jobs")
+}
