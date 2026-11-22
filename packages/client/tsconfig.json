@@ -4,7 +4,6 @@
     "_version": "7.0.0",
     "include": ["src"],
     "compilerOptions": {
-        "baseUrl": ".",
         "paths": {
             "@/*": [
                 "./src/*"
