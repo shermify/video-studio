@@ -1,10 +1,7 @@
 import { createLogger } from 'redux-logger';
-import { configureStore, type Middleware } from '@reduxjs/toolkit';
-import {
-  type TypedUseSelectorHook,
-  useDispatch,
-  useSelector,
-} from 'react-redux';
+import { configureStore } from '@reduxjs/toolkit';
+import { setupListeners } from '@reduxjs/toolkit/query';
+import { useDispatch, useSelector } from 'react-redux';
 import { api } from './api';
 import jobsReducer from './features/jobs/jobsSlice';
 
@@ -14,10 +11,6 @@ const reducer = {
   [api.reducerPath]: api.reducer,
   jobs: jobsReducer,
 };
-
-const middleware = [api.middleware] as Middleware[];
-
-const baseMiddleware = [...middleware].concat(isProd ? [] : createLogger());
 
 const store = configureStore({
   reducer,
@@ -33,8 +26,12 @@ const store = configureStore({
           'api/executeMutation/fulfilled',
         ],
       },
-    }).concat(...baseMiddleware),
+    })
+      .concat(api.middleware)
+      .concat(isProd ? [] : [createLogger()]),
 });
+
+setupListeners(store.dispatch);
 
 // Infer the `RootState` and `AppDispatch` types from the store itself
 export type RootState = ReturnType<typeof store.getState>;
@@ -43,7 +40,7 @@ export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;
 // Reselect
 export type Selector<S> = (state: RootState) => S;
-export const useAppDispatch = () => useDispatch<AppDispatch>();
-export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
+export const useAppDispatch = useDispatch.withTypes<AppDispatch>();
+export const useAppSelector = useSelector.withTypes<RootState>();
 
 export default store;

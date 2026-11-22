@@ -14,6 +14,7 @@ import type {
   ExtendJobResponse,
   ListProvidersResponse,
   ProviderInfo,
+  UploadedMedia,
 } from '@video-studio/types';
 
 export const api = createApi({
@@ -94,6 +95,37 @@ export const api = createApi({
       ],
     }),
 
+    uploadMedia: builder.mutation<UploadedMedia, File>({
+      query: (file) => {
+        const body = new FormData();
+        body.append('file', file);
+        return { url: '/media', method: 'POST', body };
+      },
+      transformResponse: (response: { data: UploadedMedia }) => response.data,
+    }),
+
+    cancelJob: builder.mutation<CanonicalVideoJob, string>({
+      query: (id) => ({ url: `/jobs/${id}/cancel`, method: 'POST' }),
+      transformResponse: (response: GetJobResponse) => response.data,
+      invalidatesTags: (_result, _error, id) => [
+        { type: 'Job', id },
+        { type: 'Job', id: 'LIST' },
+      ],
+    }),
+
+    regenerateJob: builder.mutation<
+      CanonicalVideoJob,
+      { id: string; requestId: string }
+    >({
+      query: ({ id, requestId }) => ({
+        url: `/jobs/${id}/regenerate`,
+        method: 'POST',
+        body: { requestId },
+      }),
+      transformResponse: (response: CreateJobResponse) => response.data,
+      invalidatesTags: [{ type: 'Job', id: 'LIST' }],
+    }),
+
     // Jobs - Remix (Sora only)
     remixJob: builder.mutation<
       CanonicalVideoJob,
@@ -133,4 +165,7 @@ export const {
   useRefreshJobMutation,
   useRemixJobMutation,
   useExtendJobMutation,
+  useUploadMediaMutation,
+  useCancelJobMutation,
+  useRegenerateJobMutation,
 } = api;

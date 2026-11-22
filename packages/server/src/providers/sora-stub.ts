@@ -1,3 +1,4 @@
+import { providerCatalog } from './catalog.js';
 import type {
   ProviderAdapter,
   ProviderSubmitResult,
@@ -14,27 +15,7 @@ import type {
 export class SoraAdapterStub implements ProviderAdapter {
   readonly providerId = 'sora';
 
-  readonly metadata: ProviderMetadata = {
-    id: 'sora',
-    name: 'Sora',
-    modes: [
-      {
-        id: 'generate',
-        label: 'Generate',
-        description: 'Generate a new video from prompt',
-      },
-      {
-        id: 'remix',
-        label: 'Remix',
-        description: 'Remix an existing video with modifications',
-      },
-    ],
-    capabilities: {
-      remix: true,
-      extend: false,
-      referenceImage: false,
-    },
-  };
+  readonly metadata: ProviderMetadata = { ...providerCatalog.sora, isStub: true };
 
   // Track fake job states for simulation
   private jobStates = new Map<

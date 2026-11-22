@@ -1,4 +1,4 @@
-import type { CanonicalJobStatus, CanonicalVideoAsset } from '@video-studio/types';
+import type { CanonicalJobStatus, CanonicalVideoAsset, MediaInput, ProviderInfo } from '@video-studio/types';
 
 /**
  * Result from submitting a job to a provider
@@ -16,6 +16,7 @@ export interface ProviderRefreshResult {
   status: CanonicalJobStatus;
   progressPct?: number | null;
   outputs?: CanonicalVideoAsset[];
+  metadata?: Record<string, unknown>;
   error?: { message: string; raw?: string | string[] } | null;
 }
 
@@ -41,16 +42,7 @@ export interface ProviderMode {
 /**
  * Provider metadata for UI
  */
-export interface ProviderMetadata {
-  id: string;
-  name: string;
-  modes: ProviderMode[];
-  capabilities: {
-    remix: boolean;
-    extend: boolean;
-    referenceImage: boolean;
-  };
-}
+export type ProviderMetadata = ProviderInfo;
 
 /**
  * Base interface for video generation provider adapters
@@ -58,6 +50,15 @@ export interface ProviderMetadata {
 export interface ProviderAdapter {
   readonly providerId: string;
   readonly metadata: ProviderMetadata;
+  readonly archiveOutputs?: boolean;
+
+  validateInput?(job: ProviderJobContext): void | Promise<void>;
+  validateRegeneration?(source: ProviderJobContext, params: RegenerateParams): void | Promise<void>;
+  cancel?(job: ProviderJobContext): Promise<ProviderRefreshResult>;
+  regenerate?(
+    job: ProviderJobContext,
+    params: RegenerateParams
+  ): Promise<ProviderSubmitResult>;
 
   /**
    * Submit a new job to the provider
@@ -107,6 +108,8 @@ export interface ProviderJobContext {
   providerJobId: string | null;
   prompt: string;
   params: Record<string, unknown>;
+  inputs?: MediaInput[];
+  metadata?: Record<string, unknown>;
   status: CanonicalJobStatus;
   outputs: CanonicalVideoAsset[];
 }
@@ -127,4 +130,30 @@ export interface ExtendParams {
   prompt?: string;
   sourceAssetIndex?: number;
   params?: Record<string, unknown>;
+}
+
+export interface RegenerateParams {
+  sourceAssetIndex?: number;
+  generateAudio?: boolean;
+}
+
+/** A rejected request can be retried; an ambiguous submission must be reconciled. */
+export class ProviderRequestError extends Error {
+  constructor(
+    message: string,
+    readonly options: {
+      definiteRejection: boolean;
+      statusCode?: number;
+      code?: string;
+      requestId?: string;
+    }
+  ) {
+    super(message);
+    this.name = 'ProviderRequestError';
+  }
+
+  get definiteRejection() { return this.options.definiteRejection; }
+  get statusCode() { return this.options.statusCode ?? 502; }
+  get code() { return this.options.code ?? 'PROVIDER_ERROR'; }
+  get requestId() { return this.options.requestId; }
 }

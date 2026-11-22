@@ -20,7 +20,7 @@
     "dev": "pnpm -r --parallel --if-present dev",
     "dev:client": "pnpm --filter @video-studio/client dev",
     "dev:server": "pnpm --filter @video-studio/server dev",
-    "dev:stop": "sh -c 'for port in 3000 5173; do pid=$(lsof -ti tcp:$port); [ -z \"$pid\" ] || kill $pid; done'",
+    "dev:stop": "sh -c 'for port in 3000 5174; do pid=$(lsof -ti tcp:$port); [ -z \"$pid\" ] || kill $pid; done'",
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
     "lint": "pnpm oxlint .",

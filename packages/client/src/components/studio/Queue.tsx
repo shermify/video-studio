@@ -1,124 +1,186 @@
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useListJobsQuery } from '@/api';
-import { useAppDispatch, useAppSelector } from '@/store';
-import { setFilters } from '@/features/jobs/jobsSlice';
-import { JobCard } from './JobCard';
+import { useState } from 'react';
 import { Search } from 'lucide-react';
-import type { CanonicalJobStatus } from '@video-studio/types';
-
-type FilterTab = 'all' | CanonicalJobStatus;
+import type { CanonicalJobStatus, ProviderId } from '@video-studio/types';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useListJobsQuery, useListProvidersQuery } from '@/api';
+import { useAppDispatch, useAppSelector } from '@/store';
+import {
+  selectJobFilters,
+  setFilters,
+  type JobFilters,
+} from '@/features/jobs/jobsSlice';
+import { errorMessage } from '@/lib/errors';
+import { JobCard } from './JobCard';
+import { jobStatus } from './jobStatus';
 
 export function Queue() {
+  const filters = useAppSelector(selectJobFilters);
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="border-b px-4 py-4">
+        <h2 className="text-lg font-semibold">Queue</h2>
+      </div>
+      <QueueFilters filters={filters} />
+      <QueuePage key={JSON.stringify(filters)} filters={filters} />
+    </div>
+  );
+}
+
+function QueueFilters({ filters }: { filters: JobFilters }) {
   const dispatch = useAppDispatch();
-  const filters = useAppSelector((state) => state.jobs.filters);
+  const { data: providers } = useListProvidersQuery();
+  return (
+    <div className="space-y-3 border-b p-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label htmlFor="queue-provider">Provider</Label>
+          <Select
+            value={filters.provider ?? 'all'}
+            onValueChange={(value) =>
+              dispatch(
+                setFilters({
+                  provider: value === 'all' ? undefined : (value as ProviderId),
+                })
+              )
+            }
+          >
+            <SelectTrigger id="queue-provider" className="h-11 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All providers</SelectItem>
+              {providers?.map((provider) => (
+                <SelectItem key={provider.id} value={provider.id}>
+                  {provider.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="queue-status">Status</Label>
+          <Select
+            value={filters.status ?? 'all'}
+            onValueChange={(value) =>
+              dispatch(
+                setFilters({
+                  status:
+                    value === 'all' ? undefined : (value as CanonicalJobStatus),
+                })
+              )
+            }
+          >
+            <SelectTrigger id="queue-status" className="h-11 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              {Object.entries(jobStatus).map(([value, status]) => (
+                <SelectItem key={value} value={value}>
+                  {status.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          aria-label="Search prompts"
+          placeholder="Search prompts…"
+          value={filters.q ?? ''}
+          onChange={(event) =>
+            dispatch(setFilters({ q: event.target.value || undefined }))
+          }
+          className="h-11 pl-10"
+        />
+      </div>
+    </div>
+  );
+}
 
-  // Map tab to status filter
-  const currentTab: FilterTab = filters.status ?? 'all';
-
-  const { data, isLoading, isFetching } = useListJobsQuery({
-    status: filters.status,
-    q: filters.q,
-    limit: 50,
-  });
-
-  const handleTabChange = (value: string) => {
-    const tab = value as FilterTab;
-    dispatch(setFilters({ status: tab === 'all' ? undefined : tab }));
-  };
-
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    dispatch(setFilters({ q: e.target.value || undefined }));
-  };
-
+function QueuePage({ filters }: { filters: JobFilters }) {
+  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
+  const { data, isLoading, isFetching, error, refetch } = useListJobsQuery(
+    { ...filters, limit: 20, cursor: cursors.at(-1) },
+    { pollingInterval: 5000, skipPollingIfUnfocused: true }
+  );
   const jobs = data?.data ?? [];
   const total = data?.meta.total ?? 0;
-
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="border-b px-4 py-3">
-        <h2 className="text-lg font-semibold">Queue</h2>
-        <p className="text-sm text-muted-foreground">
-          {total} job{total !== 1 ? 's' : ''}
-        </p>
+    <>
+      <p className="px-4 pt-3 text-sm text-muted-foreground">
+        {total} job{total === 1 ? '' : 's'}
+      </p>
+      <div className="min-h-0 flex-1 overflow-auto p-4 space-y-3">
+        {error && (
+          <div
+            role="alert"
+            className="rounded-lg border border-destructive/40 p-3 text-sm"
+          >
+            <p className="text-destructive">{errorMessage(error)}</p>
+            <Button
+              variant="outline"
+              className="mt-2"
+              onClick={() => {
+                if (cursors.length > 1) setCursors([undefined]);
+                else void refetch();
+              }}
+            >
+              Reload queue
+            </Button>
+          </div>
+        )}
+        {isLoading ? (
+          Array.from({ length: 4 }, (_, index) => (
+            <Skeleton key={index} className="h-32 w-full rounded-lg" />
+          ))
+        ) : jobs.length === 0 && !error ? (
+          <div className="py-12 text-center text-muted-foreground">
+            <p>No jobs found</p>
+            <p className="mt-1 text-sm">
+              {filters.q || filters.status || filters.provider
+                ? 'Try changing the filters.'
+                : 'Create a video to get started.'}
+            </p>
+          </div>
+        ) : (
+          jobs.map((job) => <JobCard key={job.id} job={job} />)
+        )}
       </div>
-
-      {/* Tabs */}
-      <Tabs
-        value={currentTab}
-        onValueChange={handleTabChange}
-        className="flex-1 flex flex-col"
-      >
-        <div className="border-b px-4 py-2">
-          <TabsList className="w-full">
-            <TabsTrigger value="all" className="flex-1">
-              All
-            </TabsTrigger>
-            <TabsTrigger value="running" className="flex-1">
-              Running
-            </TabsTrigger>
-            <TabsTrigger value="succeeded" className="flex-1">
-              Done
-            </TabsTrigger>
-            <TabsTrigger value="failed" className="flex-1">
-              Failed
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        {/* Search */}
-        <div className="px-4 py-2 border-b">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-            <Input
-              placeholder="Search prompts..."
-              value={filters.q ?? ''}
-              onChange={handleSearch}
-              className="pl-8 h-8"
-            />
-          </div>
-        </div>
-
-        {/* Job list */}
-        <TabsContent value={currentTab} className="flex-1 overflow-auto m-0">
-          <div className="p-4 space-y-2">
-            {isLoading ? (
-              // Loading skeletons
-              Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="rounded-lg border p-3 space-y-2">
-                  <div className="flex gap-2">
-                    <Skeleton className="h-5 w-12" />
-                    <Skeleton className="h-5 w-16" />
-                  </div>
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-2/3" />
-                </div>
-              ))
-            ) : jobs.length === 0 ? (
-              // Empty state
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <div className="text-3xl mb-2">📭</div>
-                <p>No jobs found</p>
-                {filters.q && (
-                  <p className="text-sm">Try a different search term</p>
-                )}
-              </div>
-            ) : (
-              // Job cards
-              jobs.map((job) => <JobCard key={job.id} job={job} />)
-            )}
-
-            {/* Loading indicator for refetching */}
-            {isFetching && !isLoading && (
-              <div className="text-center py-2 text-sm text-muted-foreground">
-                Updating...
-              </div>
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
-    </div>
+      <div className="flex items-center justify-between gap-2 border-t p-4">
+        <Button
+          variant="outline"
+          disabled={cursors.length === 1 || isFetching}
+          onClick={() => setCursors((current) => current.slice(0, -1))}
+        >
+          Previous
+        </Button>
+        <span className="text-sm text-muted-foreground">
+          Page {cursors.length}
+        </span>
+        <Button
+          variant="outline"
+          disabled={!data?.meta.nextCursor || isFetching}
+          onClick={() => {
+            const next = data?.meta.nextCursor;
+            if (next) setCursors((current) => [...current, next]);
+          }}
+        >
+          Next
+        </Button>
+      </div>
+    </>
   );
 }

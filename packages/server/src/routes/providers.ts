@@ -8,12 +8,7 @@ export async function providersRoutes(fastify: FastifyInstance) {
     const providers = getAllProviderMetadata();
 
     const response: ListProvidersResponse = {
-      data: providers.map((p) => ({
-        id: p.id,
-        name: p.name,
-        modes: p.modes,
-        capabilities: p.capabilities,
-      })),
+      data: providers,
     };
 
     return reply.send(response);

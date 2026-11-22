@@ -8,14 +8,14 @@
     "migrate": "node --env-file-if-exists=./.env --import tsx ./src/migrate.ts",
     "db:generate": "drizzle-kit generate",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/routes/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@fastify/multipart": "^10.1.9",
     "@tursodatabase/database": "^0.8.4",
     "@video-studio/types": "workspace:^",
     "drizzle-orm": "1.0.0-rc.6",
     "fastify": "^5.12.8",
-    "fastify-sse-v2": "^4.2.2",
     "pino-pretty": "^13.2.0",
     "zod": "^4.6.7"
   },

@@ -1,0 +1,357 @@
+openapi: 3.1.0
+info:
+  title: Video Studio API
+  version: 1.1.0
+  description: Local video jobs, durable media, and provider capabilities. Job creation queues work for the server worker.
+servers:
+  - url: http://localhost:3000
+paths:
+  /api/healthz:
+    get:
+      responses:
+        '200':
+          description: Server is running.
+  /api/providers:
+    get:
+      responses:
+        '200':
+          description: Available providers, model-specific controls, modes, capabilities, and demo status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Provider'
+  /api/jobs:
+    get:
+      parameters:
+        - { name: provider, in: query, schema: { $ref: '#/components/schemas/ProviderId' } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/JobStatus' } }
+        - { name: q, in: query, description: Literal prompt substring using SQLite LIKE case folding., schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, description: Last job ID from the previous page. Ordered by creation time and ID descending., schema: { type: string } }
+      responses:
+        '200':
+          description: Matching jobs and pagination metadata. Total excludes the cursor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Job' } }
+                  meta:
+                    type: object
+                    required: [total, limit, nextCursor]
+                    properties:
+                      total: { type: integer }
+                      limit: { type: integer }
+                      nextCursor: { type: [string, 'null'] }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      description: Creates a queued job without waiting for the provider. Reusing a requestId with the same payload returns the existing job; different payloads return 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, prompt]
+              properties:
+                provider: { $ref: '#/components/schemas/ProviderId' }
+                prompt: { type: string, minLength: 1 }
+                requestId: { type: string, format: uuid }
+                mode:
+                  type: string
+                  description: For H3 use generate, image-to-video, or reference-to-video. Derived operations have dedicated routes.
+                params:
+                  type: object
+                  additionalProperties: true
+                  description: Provider-specific settings. H3 accepts model, resolution, duration, aspectRatio, generateAudio, and Max-only promptExpansionMode.
+                inputs: { type: array, items: { $ref: '#/components/schemas/MediaInput' } }
+                assets:
+                  type: array
+                  deprecated: true
+                  description: Legacy Sora/Veo video inputs.
+                  items: { $ref: '#/components/schemas/VideoAsset' }
+      responses:
+        '201': { $ref: '#/components/responses/Job' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    get:
+      responses:
+        '200': { $ref: '#/components/responses/Job' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      description: Deletes an unsubmitted or terminal job. Active, uncertain, or actively referenced source jobs return 409. Provider deletion failures retain the local record. Local media files are retained.
+      responses:
+        '200':
+          description: Job deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      deleted: { const: true }
+        default: { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/refresh:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    post:
+      description: Advances the job using the same coordinated execution path as the worker. Ambiguous submissions are never automatically repeated.
+      responses:
+        '200': { $ref: '#/components/responses/Job' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    post:
+      description: Cancels an unsubmitted local job or a queued provider task when supported. Running tasks cannot be canceled. Unconfirmed cancellation retains tracking.
+      responses:
+        '200': { $ref: '#/components/responses/Job' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/content:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    get:
+      parameters:
+        - { name: asset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: download, in: query, schema: { type: string, enum: ['1'] } }
+        - { name: Range, in: header, schema: { type: string }, description: A single byte range for archived local video. }
+      responses:
+        '200':
+          description: Video content. Archived outputs support Content-Length, Accept-Ranges, and download attachment headers.
+          content:
+            video/mp4: { schema: { type: string, format: binary } }
+        '206':
+          description: Requested byte range of archived video.
+          headers:
+            Content-Range: { schema: { type: string } }
+        '302': { description: Redirect to the provider content URL when no local copy exists. }
+        '416': { description: Unsatisfiable byte range. }
+        default: { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/remix:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    post:
+      description: Queues a Sora remix of a succeeded source job.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt: { type: string }
+                requestId: { type: string, format: uuid }
+      responses:
+        '201': { $ref: '#/components/responses/Job' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/extend:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    post:
+      description: Queues a Veo extension of a succeeded source job.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt: { type: string }
+                requestId: { type: string, format: uuid }
+                sourceAssetIndex: { type: integer, minimum: 0, default: 0 }
+                params: { type: object, additionalProperties: true }
+      responses:
+        '201': { $ref: '#/components/responses/Job' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/regenerate:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    post:
+      description: Queues a supported MiniMax 768P source video for 2K regeneration, preserving the original prompt and inputs.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                requestId: { type: string, format: uuid }
+                sourceAssetIndex: { type: integer, minimum: 0, default: 0 }
+                generateAudio: { type: boolean }
+      responses:
+        '201': { $ref: '#/components/responses/Job' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/media:
+    post:
+      description: Stores and inspects an original file locally. Images up to 30 MB, MP4/MOV up to 50 MB, WAV/MP3 up to 15 MB. Audio/video references must be 2–15 seconds. Media dimensions and codecs must satisfy H3 limits. Requires ffprobe on the server.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              additionalProperties: false
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: Uploaded local media.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UploadedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/media/{id}:
+    get:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Range, in: header, schema: { type: string } }
+        - { name: download, in: query, schema: { type: string, enum: ['1'] } }
+      responses:
+        '200': { description: Original media bytes with its media type and length. }
+        '206': { description: Requested byte range. }
+        '416': { description: Unsatisfiable byte range. }
+        default: { $ref: '#/components/responses/Error' }
+components:
+  parameters:
+    JobId: { name: id, in: path, required: true, schema: { type: string } }
+  responses:
+    Job:
+      description: Job record, including available actions and provider errors.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { $ref: '#/components/schemas/Job' }
+    Error:
+      description: Validation, missing resource, conflict, provider, storage, or internal error.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+  schemas:
+    ProviderId: { type: string, enum: [sora, veo, minimax] }
+    JobStatus: { type: string, enum: [queued, running, succeeded, failed, canceled, unknown] }
+    MediaInput:
+      type: object
+      required: [kind, role]
+      properties:
+        kind: { type: string, enum: [image, video, audio] }
+        role: { type: string, enum: [first_frame, last_frame, reference_image, reference_video, reference_audio] }
+        uri: { type: string, format: uri, pattern: '^https://' }
+        assetId: { type: string, format: uuid }
+      oneOf:
+        - required: [uri]
+          not: { required: [assetId] }
+        - required: [assetId]
+          not: { required: [uri] }
+      description: Ordered inputs. First/last frame inputs cannot be combined with reference inputs. H3 allows one first frame, one last frame, nine reference images, three reference videos, and three reference audio clips. Video and audio totals each must not exceed 15 seconds. Remote inputs receive final media validation at MiniMax.
+    UploadedMedia:
+      type: object
+      required: [id, kind, mimeType, name, size, uri, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [image, video, audio] }
+        mimeType: { type: string }
+        name: { type: string }
+        size: { type: integer, description: Original size in bytes. }
+        uri: { type: string, description: Local preview endpoint. }
+        duration: { type: number, description: Clip duration in seconds. }
+        width: { type: integer }
+        height: { type: integer }
+        createdAt: { type: string, format: date-time }
+    VideoAsset:
+      type: object
+      required: [kind, uri]
+      properties:
+        kind: { type: string, enum: [video/mp4, video, unknown] }
+        uri: { type: string }
+        bytesBase64: { type: string }
+        storageKey: { type: string, description: Key of a durable local output. }
+    Job:
+      type: object
+      required: [id, provider, providerJobId, status, prompt, createdAt, updatedAt, params, outputs, actions]
+      properties:
+        id: { type: string }
+        provider: { $ref: '#/components/schemas/ProviderId' }
+        providerJobId: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        progressPct: { type: [integer, 'null'] }
+        prompt: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        params: { type: object, additionalProperties: true }
+        inputs: { type: array, items: { $ref: '#/components/schemas/MediaInput' } }
+        outputs: { type: array, items: { $ref: '#/components/schemas/VideoAsset' } }
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Provider usage/effective settings and local submission/archive status.
+        error:
+          type: [object, 'null']
+          properties:
+            message: { type: string }
+            raw: { oneOf: [{ type: string }, { type: array, items: { type: string } }] }
+        actions:
+          type: object
+          properties:
+            canDownload: { type: boolean }
+            canDelete: { type: boolean }
+            canRemix: { type: boolean }
+            canExtend: { type: boolean }
+            canCancel: { type: boolean }
+            canRegenerate: { type: boolean }
+    Provider:
+      type: object
+      required: [id, name, modes, capabilities]
+      properties:
+        id: { $ref: '#/components/schemas/ProviderId' }
+        name: { type: string }
+        isStub: { type: boolean }
+        modes:
+          type: array
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id: { type: string }
+              label: { type: string }
+              description: { type: string }
+        models:
+          type: array
+          items:
+            type: object
+            required: [id, label, resolutions, durations, aspectRatios]
+            properties:
+              id: { type: string }
+              label: { type: string }
+              resolutions: { type: array, items: { type: string } }
+              durations: { type: array, items: { type: integer } }
+              aspectRatios: { type: array, items: { type: string } }
+              supportsAudio: { type: boolean }
+              promptExpansion: { type: boolean }
+        capabilities:
+          type: object
+          additionalProperties: { type: boolean }

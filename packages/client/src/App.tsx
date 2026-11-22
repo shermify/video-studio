@@ -4,9 +4,9 @@ import { Queue } from '@/components/studio/Queue';
 
 export const App = () => {
   return (
-    <div className="h-screen flex">
+    <div className="h-screen flex min-w-[1000px]">
       {/* Left pane: Draft Builder */}
-      <aside className="w-80 border-r shrink-0 overflow-auto">
+      <aside className="w-[390px] border-r shrink-0 overflow-auto">
         <DraftBuilder />
       </aside>
 
@@ -16,7 +16,7 @@ export const App = () => {
       </main>
 
       {/* Right pane: Queue */}
-      <aside className="w-96 border-l shrink-0 overflow-hidden flex flex-col">
+      <aside className="w-[350px] border-l shrink-0 overflow-hidden flex flex-col">
         <Queue />
       </aside>
     </div>

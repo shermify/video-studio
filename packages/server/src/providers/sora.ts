@@ -1,3 +1,6 @@
+import { fetchProvider, providerJson } from './http.js';
+import { ProviderRequestError } from './types.js';
+import { providerCatalog } from './catalog.js';
 import type {
   ProviderAdapter,
   ProviderSubmitResult,
@@ -58,37 +61,14 @@ function mapStatus(soraStatus: SoraVideoJob['status']): CanonicalJobStatus {
 export class SoraAdapter implements ProviderAdapter {
   readonly providerId = 'sora';
 
-  readonly metadata: ProviderMetadata = {
-    id: 'sora',
-    name: 'Sora',
-    modes: [
-      {
-        id: 'generate',
-        label: 'Generate',
-        description: 'Generate a new video from prompt',
-      },
-      {
-        id: 'remix',
-        label: 'Remix',
-        description: 'Remix an existing video with modifications',
-      },
-      {
-        id: 'image-to-video',
-        label: 'Image to Video',
-        description: 'Generate video from a reference image',
-      },
-    ],
-    capabilities: {
-      remix: true,
-      extend: false,
-      referenceImage: true,
-    },
-  };
+  readonly metadata: ProviderMetadata = providerCatalog.sora;
+
+  constructor(private readonly options: { apiKey?: string; fetch?: typeof fetch } = {}) {}
 
   private getApiKey(): string {
-    const key = process.env.OPENAI_API_KEY;
+    const key = this.options.apiKey ?? process.env.OPENAI_API_KEY;
     if (!key) {
-      throw new Error('OPENAI_API_KEY environment variable is not set');
+      throw new ProviderRequestError('OPENAI_API_KEY environment variable is not set', { definiteRejection: true, code: 'PROVIDER_NOT_CONFIGURED', statusCode: 503 });
     }
     return key;
   }
@@ -99,27 +79,14 @@ export class SoraAdapter implements ProviderAdapter {
   ): Promise<T> {
     const url = path.startsWith('http') ? path : `${SORA_API_BASE}${path}`;
 
-    const response = await fetch(url, {
+    const response = await fetchProvider('Sora', url, {
       ...options,
       headers: {
         Authorization: `Bearer ${this.getApiKey()}`,
         ...options.headers,
       },
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      let errorMessage: string;
-      try {
-        const parsed = JSON.parse(errorBody);
-        errorMessage = parsed.error?.message || parsed.message || errorBody;
-      } catch {
-        errorMessage = errorBody;
-      }
-      throw new Error(`Sora API error (${response.status}): ${errorMessage}`);
-    }
-
-    return response.json() as Promise<T>;
+    }, this.options.fetch ?? globalThis.fetch);
+    return providerJson<T>('Sora', response);
   }
 
   async submit(job: ProviderJobContext): Promise<ProviderSubmitResult> {
@@ -148,27 +115,9 @@ export class SoraAdapter implements ProviderAdapter {
       formData.append('input_reference', blob, `reference.${ref.mimeType.split('/')[1] || 'png'}`);
     }
 
-    const response = await fetch(SORA_API_BASE, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.getApiKey()}`,
-      },
-      body: formData,
+    const video = await this.request<SoraVideoJob>('', {
+      method: 'POST', body: formData,
     });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      let errorMessage: string;
-      try {
-        const parsed = JSON.parse(errorBody);
-        errorMessage = parsed.error?.message || parsed.message || errorBody;
-      } catch {
-        errorMessage = errorBody;
-      }
-      throw new Error(`Sora API error (${response.status}): ${errorMessage}`);
-    }
-
-    const video = (await response.json()) as SoraVideoJob;
 
     return {
       providerJobId: video.id,
@@ -216,9 +165,14 @@ export class SoraAdapter implements ProviderAdapter {
       return;
     }
 
-    await this.request(`/${job.providerJobId}`, {
-      method: 'DELETE',
-    });
+    try {
+      await fetchProvider('Sora', `${SORA_API_BASE}/${encodeURIComponent(job.providerJobId)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${this.getApiKey()}` },
+      }, this.options.fetch ?? globalThis.fetch);
+    } catch (error) {
+      if (error instanceof ProviderRequestError && error.statusCode === 404) return;
+      throw error;
+    }
   }
 
   async content(
@@ -232,15 +186,9 @@ export class SoraAdapter implements ProviderAdapter {
     // Fetch the video content as a stream
     const url = `${SORA_API_BASE}/${job.providerJobId}/content`;
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${this.getApiKey()}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch video content: ${response.status}`);
-    }
+    const response = await fetchProvider('Sora', url, {
+      headers: { Authorization: `Bearer ${this.getApiKey()}` },
+    }, this.options.fetch ?? globalThis.fetch, 180_000);
 
     // Return stream info for the caller to pipe to client
     return {
@@ -255,11 +203,11 @@ export class SoraAdapter implements ProviderAdapter {
     params: RemixParams
   ): Promise<ProviderSubmitResult> {
     if (!job.providerJobId) {
-      throw new Error('Cannot remix job without providerJobId');
+      throw new ProviderRequestError('Cannot remix job without providerJobId', { definiteRejection: true, statusCode: 400, code: 'VALIDATION_ERROR' });
     }
 
     if (job.status !== 'succeeded') {
-      throw new Error('Can only remix completed videos');
+      throw new ProviderRequestError('Can only remix completed videos', { definiteRejection: true, statusCode: 400, code: 'VALIDATION_ERROR' });
     }
 
     const prompt = params.prompt || job.prompt;

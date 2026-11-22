@@ -1,323 +1,352 @@
-import { useAppSelector } from '@/store';
-import { useGetJobQuery } from '@/api';
+import { useRef, useState } from 'react';
+import {
+  Download,
+  Loader2,
+  RefreshCw,
+  Square,
+  WandSparkles,
+} from 'lucide-react';
+import { useAppDispatch, useAppSelector } from '@/store';
+import {
+  useCancelJobMutation,
+  useGetJobQuery,
+  useRefreshJobMutation,
+  useRegenerateJobMutation,
+} from '@/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Download, Play, Pause, RefreshCw, Loader2 } from 'lucide-react';
-import { useRef, useState, useEffect } from 'react';
+import { selectJob, selectSelectedJobId } from '@/features/jobs/jobsSlice';
+import { errorMessage } from '@/lib/errors';
 import { cn } from '@/lib/utils';
-import { useRefreshJobMutation } from '@/api';
-
-const statusConfig: Record<
-  string,
-  {
-    label: string;
-    variant:
-      | 'default'
-      | 'secondary'
-      | 'destructive'
-      | 'success'
-      | 'warning'
-      | 'outline';
-  }
-> = {
-  queued: { label: 'Queued', variant: 'secondary' },
-  running: { label: 'Running', variant: 'warning' },
-  succeeded: { label: 'Complete', variant: 'success' },
-  failed: { label: 'Failed', variant: 'destructive' },
-  canceled: { label: 'Canceled', variant: 'outline' },
-  unknown: { label: 'Unknown', variant: 'outline' },
-};
+import { jobStatus } from './jobStatus';
 
 export function Preview() {
-  const selectedJobId = useAppSelector((state) => state.jobs.selectedJobId);
+  const selectedJobId = useAppSelector(selectSelectedJobId);
+  if (!selectedJobId)
+    return (
+      <div className="flex h-full items-center justify-center p-8 text-center">
+        <div>
+          <p className="text-lg font-medium">Your next shot starts here</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Create a video or select a job in the queue to preview it.
+          </p>
+        </div>
+      </div>
+    );
+  return <SelectedJob key={selectedJobId} id={selectedJobId} />;
+}
 
-  const { data: job, isLoading } = useGetJobQuery(selectedJobId!, {
-    skip: !selectedJobId,
-    pollingInterval: 0, // We handle polling in the component based on status
+function SelectedJob({ id }: { id: string }) {
+  const dispatch = useAppDispatch();
+  const {
+    currentData: job,
+    isLoading,
+    error: loadError,
+    refetch,
+  } = useGetJobQuery(id, {
+    pollingInterval: 5000,
+    skipPollingIfUnfocused: true,
   });
-
-  const [refreshJob, { isLoading: isRefreshing }] = useRefreshJobMutation();
-
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [selectedAssetIndex, setSelectedAssetIndex] = useState(0);
-  const [prevJobId, setPrevJobId] = useState(selectedJobId);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshJob, { isLoading: isRefreshing }] = useRefreshJobMutation();
+  const [cancelJob, { isLoading: isCanceling }] = useCancelJobMutation();
+  const [regenerateJob, { isLoading: isRegenerating }] =
+    useRegenerateJobMutation();
+  const regenerateRequest = useRef<string | undefined>(undefined);
+  const busy = isRefreshing || isCanceling || isRegenerating;
 
-  // Reset selected asset when job changes (during render, not in effect)
-  if (selectedJobId !== prevJobId) {
-    setPrevJobId(selectedJobId);
-    setSelectedAssetIndex(0);
-    setIsPlaying(false);
+  async function refresh() {
+    setError(null);
+    try {
+      await refreshJob(id).unwrap();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
   }
 
-  // Auto-play when job completes
-  useEffect(() => {
-    if (
-      job?.status === 'succeeded' &&
-      job.outputs.length > 0 &&
-      videoRef.current
-    ) {
-      videoRef.current.play().catch(() => {
-        // Autoplay blocked, user will need to click play
-      });
+  async function cancel() {
+    setError(null);
+    try {
+      await cancelJob(id).unwrap();
+    } catch (cause) {
+      setError(errorMessage(cause));
     }
-  }, [job?.status, job?.outputs.length]);
+  }
 
-  // Poll running jobs
-  useEffect(() => {
-    if (!job || !['queued', 'running'].includes(job.status)) return;
-
-    const interval = setInterval(() => {
-      refreshJob(job.id);
-    }, 5000); // Poll every 5 seconds
-
-    return () => clearInterval(interval);
-  }, [job, refreshJob]);
-
-  const handlePlayPause = () => {
-    if (!videoRef.current) return;
-    if (isPlaying) {
-      videoRef.current.pause();
-    } else {
-      videoRef.current.play();
+  async function regenerate() {
+    setError(null);
+    regenerateRequest.current ??= crypto.randomUUID();
+    try {
+      const created = await regenerateJob({
+        id,
+        requestId: regenerateRequest.current,
+      }).unwrap();
+      regenerateRequest.current = undefined;
+      dispatch(selectJob(created.id));
+    } catch (cause) {
+      setError(errorMessage(cause));
     }
-  };
+  }
 
-  const handleDownload = async () => {
-    if (!job) return;
-    const url = `/api/jobs/${job.id}/content?asset=${selectedAssetIndex}`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${job.prompt.slice(0, 30).replace(/[^a-zA-Z0-9]/g, '_')}_${job.id.slice(0, 8)}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  const handleRefresh = () => {
-    if (job) {
-      refreshJob(job.id);
-    }
-  };
-
-  // Empty state
-  if (!selectedJobId) {
+  if (isLoading)
     return (
-      <div className="flex h-full flex-col">
-        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-2">
-          <div className="text-6xl opacity-50">🎬</div>
-          <div className="text-lg">Select a job to preview</div>
-          <div className="text-sm">
-            Click on a job in the queue to view it here
-          </div>
+      <div className="flex h-full items-center p-6">
+        <Skeleton className="aspect-video w-full rounded-lg" />
+      </div>
+    );
+  if (!job)
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div role="alert" className="space-y-3 text-center">
+          <p className="text-destructive">
+            {loadError ? errorMessage(loadError) : 'Job not found'}
+          </p>
+          <Button variant="outline" onClick={() => void refetch()}>
+            Reload job
+          </Button>
         </div>
       </div>
     );
-  }
-
-  // Loading state
-  if (isLoading) {
-    return (
-      <div className="flex h-full flex-col">
-        <div className="border-b px-4 py-3">
-          <Skeleton className="h-6 w-32" />
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          <Skeleton className="aspect-video w-full max-w-2xl" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!job) {
-    return (
-      <div className="flex h-full flex-col">
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          Job not found
-        </div>
-      </div>
-    );
-  }
-
-  const status = statusConfig[job.status] || statusConfig.unknown;
-  const isRunning = job.status === 'queued' || job.status === 'running';
+  const status = jobStatus[job.status];
+  const active = ['queued', 'running'].includes(job.status);
   const hasOutputs = job.outputs.length > 0;
-  const videoUrl = hasOutputs
-    ? `/api/jobs/${job.id}/content?asset=${selectedAssetIndex}`
-    : null;
+  const usage = job.metadata?.usage;
+  const usageEntries =
+    usage && typeof usage === 'object'
+      ? Object.entries(usage).filter(([, value]) => typeof value === 'number')
+      : [];
+  const archiveState = job.metadata?.archiveState;
+  const effectiveModel =
+    job.metadata?.model ?? job.params.model ?? job.provider;
+  const effectiveResolution = job.metadata?.resolution ?? job.params.resolution;
+  const effectiveRatio =
+    job.metadata?.ratio ?? job.params.aspectRatio ?? job.params.ratio;
+  const effectiveDuration = job.metadata?.duration ?? job.params.duration;
+  const generatedAudio = job.params.generateAudio ?? job.params.generate_audio;
+
+  const contentUrl = `/api/jobs/${encodeURIComponent(job.id)}/content?asset=${selectedAssetIndex}`;
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="border-b px-4 py-3 flex items-center gap-3">
-        <Badge
-          variant="outline"
-          className="text-[10px] uppercase tracking-wider"
-        >
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex flex-wrap items-center gap-3 border-b px-5 py-4">
+        <Badge variant="outline" className="text-xs uppercase tracking-wider">
           {job.provider}
         </Badge>
         <Badge variant={status.variant}>{status.label}</Badge>
-        {isRunning && (
-          <>
-            {job.progressPct != null && (
-              <span className="text-sm text-muted-foreground">
-                {job.progressPct}%
-              </span>
-            )}
+        <div className="ml-auto flex flex-wrap gap-2">
+          {(active || job.status === 'unknown') && (
             <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
+              variant="outline"
+              className="min-h-10"
+              onClick={() => void refresh()}
+              disabled={busy}
             >
-              {isRefreshing ? (
+              <RefreshCw
+                className={cn('size-4', isRefreshing && 'animate-spin')}
+              />
+              Refresh
+            </Button>
+          )}
+          {job.actions.canCancel && (
+            <Button
+              variant="outline"
+              className="min-h-10"
+              onClick={() => void cancel()}
+              disabled={busy}
+            >
+              {isCanceling ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
-                <RefreshCw className="size-4" />
+                <Square className="size-4" />
               )}
-              <span className="ml-1">Refresh</span>
+              Cancel
             </Button>
-          </>
-        )}
-        {hasOutputs && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleDownload}
-            className="ml-auto"
-          >
-            <Download className="size-4" />
-            <span className="ml-1">Download</span>
-          </Button>
-        )}
+          )}
+          {hasOutputs && job.actions.canDownload && (
+            <Button asChild variant="outline" className="min-h-10">
+              <a href={`${contentUrl}&download=1`} download>
+                <Download className="size-4" />
+                Download
+              </a>
+            </Button>
+          )}
+        </div>
       </div>
-
-      {/* Video player or status */}
-      <div className="flex-1 flex items-center justify-center p-4 min-h-0">
+      {(error || loadError) && (
+        <p
+          role="alert"
+          className="border-b bg-destructive/5 p-4 text-sm text-destructive"
+        >
+          {error ?? errorMessage(loadError)}
+        </p>
+      )}
+      <div className="flex min-h-48 flex-1 items-center justify-center p-5">
         {job.status === 'succeeded' && hasOutputs ? (
-          <div className="relative h-full w-full flex items-center justify-center">
-            <video
-              ref={videoRef}
-              src={videoUrl!}
-              className="max-w-full max-h-full rounded-lg shadow-lg bg-black"
-              controls
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
-            />
-            {/* Play/Pause overlay button */}
-            <button
-              onClick={handlePlayPause}
-              className={cn(
-                'absolute inset-0 flex items-center justify-center pointer-events-none'
-              )}
-            >
-              <div
-                className={cn(
-                  'bg-white/90 rounded-full p-4 pointer-events-auto',
-                  'opacity-0 hover:opacity-100 transition-opacity'
-                )}
-              >
-                {isPlaying ? (
-                  <Pause className="size-8 text-black" />
-                ) : (
-                  <Play className="size-8 text-black ml-1" />
-                )}
-              </div>
-            </button>
-          </div>
-        ) : isRunning ? (
-          <div className="flex flex-col items-center gap-4">
-            <div className="relative">
-              <Loader2 className="size-16 animate-spin text-primary" />
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-medium">
-                {job.status === 'queued'
-                  ? 'Waiting to start...'
-                  : 'Generating video...'}
-              </p>
-              {job.progressPct != null && (
-                <p className="text-muted-foreground">
-                  {job.progressPct}% complete
-                </p>
-              )}
-            </div>
-            {/* Progress bar */}
+          <video
+            key={contentUrl}
+            src={contentUrl}
+            controls
+            preload="metadata"
+            className="max-h-full max-w-full rounded-lg bg-black shadow-lg"
+          />
+        ) : active ? (
+          <div className="space-y-4 text-center">
+            <Loader2 className="mx-auto size-12 animate-spin text-primary" />
+            <p className="text-lg font-medium">
+              {job.status === 'queued'
+                ? 'Waiting to start…'
+                : 'Generating video…'}
+            </p>
             {job.progressPct != null && (
-              <div className="w-64 h-2 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all duration-300"
-                  style={{ width: `${job.progressPct}%` }}
-                />
-              </div>
-            )}
-          </div>
-        ) : job.status === 'failed' ? (
-          <div className="flex flex-col items-center gap-4 text-center">
-            <div className="text-6xl">❌</div>
-            <div>
-              <p className="text-lg font-medium text-destructive">
-                Generation failed
+              <p className="text-sm text-muted-foreground">
+                {job.progressPct}% complete
               </p>
-              {job.error && (
-                <p className="text-sm text-muted-foreground mt-1">
-                  {job.error.message}
-                </p>
-              )}
-            </div>
+            )}
+            <p className="text-sm text-muted-foreground">
+              You can leave this view; generation continues in the background.
+            </p>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-4 text-center text-muted-foreground">
-            <div className="text-6xl">🎥</div>
-            <p>No video available</p>
+          <div className="space-y-3 text-center">
+            <p
+              className={cn(
+                'text-lg font-medium',
+                job.status === 'failed' && 'text-destructive'
+              )}
+            >
+              {job.status === 'failed'
+                ? 'Generation failed'
+                : job.status === 'canceled'
+                  ? 'Generation canceled'
+                  : job.status === 'unknown'
+                    ? 'This job needs attention'
+                    : 'No video available'}
+            </p>
+            {job.error && (
+              <p className="max-w-lg whitespace-pre-wrap text-sm text-muted-foreground">
+                {job.error.message}
+              </p>
+            )}
+            {job.status === 'unknown' && (
+              <p className="max-w-lg text-sm text-muted-foreground">
+                Check the provider task before starting another generation.
+              </p>
+            )}
           </div>
         )}
       </div>
-
-      {/* Output strip for multiple outputs */}
+      {!['failed', 'unknown'].includes(job.status) && job.error && (
+        <p role="alert" className="border-t p-4 text-sm text-destructive">
+          {job.error.message}
+        </p>
+      )}
       {hasOutputs && job.outputs.length > 1 && (
-        <div className="border-t px-4 py-3">
-          <p className="text-xs text-muted-foreground mb-2">
-            {job.outputs.length} outputs
-          </p>
-          <div className="flex gap-2 overflow-x-auto">
-            {job.outputs.map((_, index) => (
-              <button
-                key={index}
-                onClick={() => setSelectedAssetIndex(index)}
-                className={cn(
-                  'shrink-0 w-20 h-12 rounded border-2 transition-colors',
-                  'flex items-center justify-center text-xs font-medium',
-                  selectedAssetIndex === index
-                    ? 'border-primary bg-primary/10'
-                    : 'border-muted hover:border-muted-foreground'
-                )}
-              >
-                #{index + 1}
-              </button>
-            ))}
-          </div>
+        <div className="flex flex-wrap gap-2 border-t p-4">
+          {job.outputs.map((_, index) => (
+            <Button
+              key={index}
+              variant={selectedAssetIndex === index ? 'secondary' : 'outline'}
+              onClick={() => setSelectedAssetIndex(index)}
+            >
+              Output {index + 1}
+            </Button>
+          ))}
         </div>
       )}
-
-      {/* Job details */}
-      <div className="border-t px-4 py-3">
-        <p className="text-sm line-clamp-3">{job.prompt}</p>
-        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-          <span>{String(job.params.aspectRatio ?? '16:9')}</span>
-          {'duration' in job.params && (
-            <span>{String(job.params.duration)}s</span>
+      <div className="max-h-[40%] space-y-3 overflow-auto border-t px-5 py-4">
+        <p className="whitespace-pre-wrap text-sm">{job.prompt}</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
+          <span>{String(effectiveModel)}</span>
+          {effectiveResolution != null && (
+            <span>{String(effectiveResolution)}</span>
           )}
-          {'model' in job.params && (
-            <span className="truncate">{String(job.params.model)}</span>
+          <span>{String(effectiveRatio ?? 'adaptive')}</span>
+          {effectiveDuration != null && (
+            <span>{String(effectiveDuration)} seconds</span>
           )}
-          <span className="ml-auto">
-            {new Date(job.createdAt).toLocaleString()}
-          </span>
+          <span>{new Date(job.createdAt).toLocaleString()}</span>
         </div>
+        {typeof generatedAudio === 'boolean' && (
+          <p className="text-sm text-muted-foreground">
+            {generatedAudio ? 'Audio enabled' : 'Silent video'}
+          </p>
+        )}
+        {archiveState === 'ready' && (
+          <p className="text-sm text-muted-foreground">
+            Local video copy saved.
+          </p>
+        )}
+        {archiveState === 'pending' && (
+          <p className="text-sm text-muted-foreground">
+            Saving a local video copy…
+          </p>
+        )}
+        {typeof job.metadata?.archiveError === 'string' && (
+          <p role="alert" className="text-sm text-destructive">
+            {job.metadata.archiveError}
+          </p>
+        )}
+
+        {job.inputs && job.inputs.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            {job.inputs.length} source input{job.inputs.length === 1 ? '' : 's'}{' '}
+            ·{' '}
+            {job.inputs
+              .map((input) => input.role.replaceAll('_', ' '))
+              .join(', ')}
+          </p>
+        )}
+        {usageEntries.length > 0 && (
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              Generation usage
+            </summary>
+            <dl className="mt-3 space-y-2 text-sm">
+              {usageEntries.map(([key, value]) => (
+                <div key={key} className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">
+                    {usageLabels[key] ?? key.replaceAll('_', ' ')}
+                  </dt>
+                  <dd>{Number(value).toLocaleString()}</dd>
+                </div>
+              ))}
+            </dl>
+          </details>
+        )}
+        {job.actions.canRegenerate && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
+            <p className="max-w-sm text-sm text-muted-foreground">
+              Upgrade this 768P video to 2K using the original prompt and
+              references.
+            </p>
+            <Button
+              className="min-h-11"
+              onClick={() => void regenerate()}
+              disabled={busy}
+            >
+              {isRegenerating ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <WandSparkles className="size-4" />
+              )}
+              Regenerate at 2K
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+const usageLabels: Record<string, string> = {
+  total_seconds: 'Total metered seconds',
+  input_seconds: 'Reference video seconds',
+  output_seconds: 'Output seconds',
+  input_image_count: 'Reference images',
+  input_audio_seconds: 'Reference audio seconds',
+  total_tokens: 'Total tokens',
+  prompt_tokens: 'Input tokens',
+  completion_tokens: 'Output tokens',
+};

@@ -1,3 +1,6 @@
+import { fetchProvider, providerJson } from './http.js';
+import { ProviderRequestError } from './types.js';
+import { providerCatalog } from './catalog.js';
 import { readFileSync } from 'fs';
 import { createSign } from 'crypto';
 import type {
@@ -74,32 +77,11 @@ interface CachedToken {
 export class VeoAdapter implements ProviderAdapter {
   readonly providerId = 'veo';
 
-  readonly metadata: ProviderMetadata = {
-    id: 'veo',
-    name: 'Veo',
-    modes: [
-      {
-        id: 'generate',
-        label: 'Generate',
-        description: 'Generate a new video from prompt',
-      },
-      {
-        id: 'extend',
-        label: 'Extend',
-        description: 'Extend an existing video',
-      },
-      {
-        id: 'image-to-video',
-        label: 'Image to Video',
-        description: 'Generate video from reference image',
-      },
-    ],
-    capabilities: {
-      remix: false,
-      extend: true,
-      referenceImage: true,
-    },
-  };
+  readonly metadata: ProviderMetadata = providerCatalog.veo;
+
+  constructor(private readonly options: {
+    fetch?: typeof fetch; accessToken?: string; projectId?: string; location?: string;
+  } = {}) {}
 
   private cachedToken: CachedToken | null = null;
   private credentials: ServiceAccountCredentials | null = null;
@@ -111,9 +93,7 @@ export class VeoAdapter implements ProviderAdapter {
 
     const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
     if (!credentialsPath) {
-      throw new Error(
-        'GOOGLE_APPLICATION_CREDENTIALS environment variable is not set'
-      );
+      throw new ProviderRequestError('GOOGLE_APPLICATION_CREDENTIALS environment variable is not set', { definiteRejection: true, code: 'PROVIDER_NOT_CONFIGURED', statusCode: 503 });
     }
 
     try {
@@ -123,12 +103,12 @@ export class VeoAdapter implements ProviderAdapter {
       ) as ServiceAccountCredentials;
       return this.credentials;
     } catch (error) {
-      throw new Error(`Failed to read service account credentials: ${error}`);
+      throw new ProviderRequestError(`Failed to read service account credentials: ${error}`, { definiteRejection: true, code: 'PROVIDER_NOT_CONFIGURED', statusCode: 503 });
     }
   }
 
   private getProjectId(): string {
-    const projectId = process.env.GOOGLE_CLOUD_PROJECT;
+    const projectId = this.options.projectId ?? process.env.GOOGLE_CLOUD_PROJECT;
     if (projectId) {
       return projectId;
     }
@@ -137,7 +117,7 @@ export class VeoAdapter implements ProviderAdapter {
   }
 
   private getLocation(): string {
-    return process.env.GOOGLE_CLOUD_LOCATION || DEFAULT_LOCATION;
+    return this.options.location || process.env.GOOGLE_CLOUD_LOCATION || DEFAULT_LOCATION;
   }
 
   private getModel(params?: Record<string, unknown>): string {
@@ -185,48 +165,57 @@ export class VeoAdapter implements ProviderAdapter {
    * Exchange JWT for access token
    */
   private async getAccessToken(): Promise<string> {
-    const now = Date.now();
+    if (this.options.accessToken) return this.options.accessToken;
+    try {
+      const now = Date.now();
 
-    // Return cached token if still valid
-    if (
-      this.cachedToken &&
-      this.cachedToken.expiresAt > now + TOKEN_REFRESH_MARGIN_SECONDS * 1000
-    ) {
+      // Return cached token if still valid
+      if (
+        this.cachedToken &&
+        this.cachedToken.expiresAt > now + TOKEN_REFRESH_MARGIN_SECONDS * 1000
+      ) {
+        return this.cachedToken.accessToken;
+      }
+
+      const jwt = this.createSignedJwt();
+
+      const response = await fetchProvider('Google authentication', 'https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+          assertion: jwt,
+        }),
+      }, this.options.fetch ?? globalThis.fetch, 30_000);
+
+      const tokenResponse = await providerJson<{
+        access_token: string;
+        expires_in: number;
+        token_type: string;
+      }>('Google authentication', response);
+
+      if (typeof tokenResponse.access_token !== 'string' || !tokenResponse.access_token ||
+        !Number.isFinite(tokenResponse.expires_in) || tokenResponse.expires_in <= 0) {
+        throw new Error('Google authentication returned an incomplete token');
+      }
+      this.cachedToken = {
+        accessToken: tokenResponse.access_token,
+        expiresAt: now + tokenResponse.expires_in * 1000,
+      };
+
       return this.cachedToken.accessToken;
+    } catch (error) {
+      // Token exchange happens before any generation POST, so retrying the job
+      // after an authentication failure cannot duplicate a generation.
+      throw new ProviderRequestError(error instanceof Error ? error.message : 'Google authentication failed', {
+        definiteRejection: true,
+        ...(error instanceof ProviderRequestError ? {
+          statusCode: error.statusCode, code: error.code, requestId: error.requestId,
+        } : {}),
+      });
     }
-
-    const jwt = this.createSignedJwt();
-
-    const response = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-        assertion: jwt,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(
-        `Failed to get access token: ${response.status} ${errorBody}`
-      );
-    }
-
-    const tokenResponse = (await response.json()) as {
-      access_token: string;
-      expires_in: number;
-      token_type: string;
-    };
-
-    this.cachedToken = {
-      accessToken: tokenResponse.access_token,
-      expiresAt: now + tokenResponse.expires_in * 1000,
-    };
-
-    return this.cachedToken.accessToken;
   }
 
   /**
@@ -256,28 +245,15 @@ export class VeoAdapter implements ProviderAdapter {
     const accessToken = await this.getAccessToken();
     const url = `${this.getBaseUrl()}/${path}`;
 
-    const response = await fetch(url, {
+    const response = await fetchProvider('Veo', url, {
       ...options,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
         ...options.headers,
       },
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      let errorMessage: string;
-      try {
-        const parsed = JSON.parse(errorBody);
-        errorMessage = parsed.error?.message || parsed.message || errorBody;
-      } catch {
-        errorMessage = errorBody;
-      }
-      throw new Error(`Veo API error (${response.status}): ${errorMessage}`);
-    }
-
-    return response.json() as Promise<T>;
+    }, this.options.fetch ?? globalThis.fetch);
+    return providerJson<T>('Veo', response);
   }
 
   /**
@@ -402,32 +378,15 @@ export class VeoAdapter implements ProviderAdapter {
     const accessToken = await this.getAccessToken();
     const url = `${baseUrl}/${modelPath}:fetchPredictOperation`;
 
-    const fetchResponse = await fetch(url, {
+    const fetchResponse = await fetchProvider('Veo', url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        operationName: job.providerJobId,
-      }),
-    });
-
-    if (!fetchResponse.ok) {
-      const errorBody = await fetchResponse.text();
-      let errorMessage: string;
-      try {
-        const parsed = JSON.parse(errorBody);
-        errorMessage = parsed.error?.message || parsed.message || errorBody;
-      } catch {
-        errorMessage = errorBody;
-      }
-      throw new Error(
-        `Veo API error (${fetchResponse.status}): ${errorMessage}`
-      );
-    }
-
-    const response = (await fetchResponse.json()) as VeoOperationResponse;
+      body: JSON.stringify({ operationName: job.providerJobId }),
+    }, this.options.fetch ?? globalThis.fetch, 60_000);
+    const response = await providerJson<VeoOperationResponse>('Veo', fetchResponse);
 
     // Operation still running
     if (!response.done) {
@@ -549,28 +508,28 @@ export class VeoAdapter implements ProviderAdapter {
     params: ExtendParams
   ): Promise<ProviderSubmitResult> {
     if (!job.providerJobId) {
-      throw new Error('Cannot extend job without providerJobId');
+      throw new ProviderRequestError('Cannot extend job without providerJobId', { definiteRejection: true, statusCode: 400, code: 'VALIDATION_ERROR' });
     }
 
     if (job.status !== 'succeeded') {
-      throw new Error('Can only extend completed videos');
+      throw new ProviderRequestError('Can only extend completed videos', { definiteRejection: true, statusCode: 400, code: 'VALIDATION_ERROR' });
     }
 
     const model = this.getModel(params.params);
 
     if (!this.supportsExtend(model)) {
-      throw new Error(`Model ${model} does not support video extension`);
+      throw new ProviderRequestError(`Model ${model} does not support video extension`, { definiteRejection: true, statusCode: 400, code: 'VALIDATION_ERROR' });
     }
 
     // Get the video content from the source job
     const sourceAssetIndex = params.sourceAssetIndex ?? 0;
     const sourceAsset = job.outputs[sourceAssetIndex];
     if (!sourceAsset) {
-      throw new Error(`Source asset index ${sourceAssetIndex} not found`);
+      throw new ProviderRequestError(`Source asset index ${sourceAssetIndex} not found`, { definiteRejection: true, statusCode: 400, code: 'VALIDATION_ERROR' });
     }
 
     if (!sourceAsset.bytesBase64) {
-      throw new Error('Source video must have base64 content for extension');
+      throw new ProviderRequestError('Source video must have base64 content for extension', { definiteRejection: true, statusCode: 400, code: 'VALIDATION_ERROR' });
     }
 
     // Build instance object with video input

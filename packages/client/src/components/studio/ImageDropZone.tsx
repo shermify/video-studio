@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { X, ImagePlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { DraftImage } from '@/features/jobs/jobsSlice';
+import type { DraftImage } from '@/features/jobs/draft';
 
 interface ImageDropZoneProps {
   label: string;
@@ -105,11 +105,13 @@ export function ImageDropZone({
     <div
       className={cn(
         'relative flex flex-col items-center justify-center',
-        'w-20 h-20 rounded-lg border-2 border-dashed',
+        'min-w-24 h-24 flex-1 rounded-lg border-2 border-dashed',
         'transition-colors cursor-pointer',
         disabled && 'opacity-50 cursor-not-allowed',
         isDragOver && !disabled && 'border-primary bg-primary/10',
-        !isDragOver && !image && 'border-muted-foreground/30 hover:border-muted-foreground/50',
+        !isDragOver &&
+          !image &&
+          'border-muted-foreground/30 hover:border-muted-foreground/50',
         image && 'border-transparent',
         className
       )}
@@ -128,9 +130,10 @@ export function ImageDropZone({
           <button
             type="button"
             onClick={handleClear}
+            aria-label={`Remove ${label}`}
             className={cn(
               'absolute -top-1.5 -right-1.5',
-              'w-5 h-5 rounded-full',
+              'w-8 h-8 rounded-full',
               'bg-destructive text-destructive-foreground',
               'flex items-center justify-center',
               'hover:bg-destructive/90 transition-colors',
@@ -143,7 +146,7 @@ export function ImageDropZone({
       ) : (
         <>
           <ImagePlus className="size-5 text-muted-foreground/50" />
-          <span className="text-[10px] text-muted-foreground/70 mt-1 text-center px-1 leading-tight">
+          <span className="text-sm text-muted-foreground mt-1 text-center px-1 leading-tight">
             {label}
           </span>
         </>

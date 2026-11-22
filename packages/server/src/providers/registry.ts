@@ -3,6 +3,8 @@ import { SoraAdapter } from './sora.js';
 import { SoraAdapterStub } from './sora-stub.js';
 import { VeoAdapter } from './veo.js';
 import { VeoAdapterStub } from './veo-stub.js';
+import { MiniMaxAdapter } from './minimax.js';
+import { MiniMaxAdapterStub } from './minimax-stub.js';
 
 // Singleton instances of adapters
 const adapters: Map<string, ProviderAdapter> = new Map();
@@ -23,6 +25,7 @@ const veoAdapter =
 
 adapters.set('sora', soraAdapter);
 adapters.set('veo', veoAdapter);
+adapters.set('minimax', useStubs || !process.env.MINIMAX_API_KEY ? new MiniMaxAdapterStub() : new MiniMaxAdapter());
 
 /**
  * Get a provider adapter by ID

@@ -1,3 +1,4 @@
+import { providerCatalog } from './catalog.js';
 import type {
   ProviderAdapter,
   ProviderSubmitResult,
@@ -14,32 +15,7 @@ import type {
 export class VeoAdapterStub implements ProviderAdapter {
   readonly providerId = 'veo';
 
-  readonly metadata: ProviderMetadata = {
-    id: 'veo',
-    name: 'Veo',
-    modes: [
-      {
-        id: 'generate',
-        label: 'Generate',
-        description: 'Generate a new video from prompt',
-      },
-      {
-        id: 'extend',
-        label: 'Extend',
-        description: 'Extend an existing video',
-      },
-      {
-        id: 'image-to-video',
-        label: 'Image to Video',
-        description: 'Generate video from reference image',
-      },
-    ],
-    capabilities: {
-      remix: false,
-      extend: true,
-      referenceImage: true,
-    },
-  };
+  readonly metadata: ProviderMetadata = { ...providerCatalog.veo, isStub: true };
 
   // Track fake job states for simulation (using operation name as key)
   private operationStates = new Map<

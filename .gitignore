@@ -17,6 +17,7 @@ dist-ssr
 *.db-*
 *.sqlite
 *.sqlite-*
+/packages/server/data/
 
 # Editor directories and files
 .vscode/*
