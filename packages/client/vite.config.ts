@@ -7,12 +7,6 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    ssl({
-      /** name of certification */
-      name: 'test',
-      /** custom trust domains */
-      domains: ['*.custom.com'],
-    }),
   ],
   resolve: {
     alias: {
@@ -22,6 +16,7 @@ export default defineConfig({
   cacheDir: '../../node_modules/.vite',
   server: {
     host: true,
+    port: 5174,
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
