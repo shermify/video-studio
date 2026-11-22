@@ -9,7 +9,7 @@ import type {
   ProviderJobContext,
   ExtendParams,
 } from './types.js';
-import type { CanonicalJobStatus, CanonicalVideoAsset } from '@video/types';
+import type { CanonicalVideoAsset } from '@video-studio/types';
 
 const DEFAULT_MODEL = 'veo-3.1-generate-preview';
 const DEFAULT_LOCATION = 'us-central1';

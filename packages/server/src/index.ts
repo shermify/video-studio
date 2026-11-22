@@ -2,6 +2,7 @@ import Fastify, { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { FastifySSEPlugin } from 'fastify-sse-v2';
 import { jobsRoutes } from './routes/jobs.js';
 import { providersRoutes } from './routes/providers.js';
+import { db } from './db.js';
 
 const server = Fastify({
   logger: {
@@ -13,6 +14,10 @@ const server = Fastify({
       },
     },
   },
+});
+
+server.addHook('onClose', async () => {
+  await db.$client.close();
 });
 
 // Consistent error response shape

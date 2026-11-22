@@ -3,7 +3,7 @@ import type {
   ProviderId,
   CanonicalJobStatus,
   CanonicalVideoAsset,
-} from '@video/types';
+} from '@video-studio/types';
 
 // Image data structure for drop zones
 export interface DraftImage {

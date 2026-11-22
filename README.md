@@ -17,16 +17,16 @@ A web application for creating and managing AI video generation jobs using OpenA
 ## Architecture
 
 ```
-video/
+video-studio/
 ├── packages/
 │   ├── client/          # React frontend
-│   ├── server/          # Fastify API server
+│   ├── server/          # Fastify API server, Drizzle schema/migrations, .env
 │   └── types/           # Shared TypeScript types
-├── package.json         # Root workspace config
-└── .env                 # Environment variables
+├── package.json         # Root scripts
+└── pnpm-workspace.yaml  # Workspace config
 ```
 
-### Client (`@video/client`)
+### Client (`@video-studio/client`)
 
 - **React 19** with Vite for fast development
 - **Tailwind CSS 4** with Radix UI components (shadcn/ui style)
@@ -36,40 +36,40 @@ video/
   - **Preview** (center): View job details and play completed videos
   - **Queue** (right): Browse and manage all jobs
 
-### Server (`@video/server`)
+### Server (`@video-studio/server`)
 
 - **Fastify** with SSE support for real-time updates
-- **Prisma ORM** with PostgreSQL
+- **Drizzle ORM** with local TursoDB (`@tursodatabase/database`)
 - RESTful API with consistent error handling
 - Provider abstraction layer for Sora and Veo
 
 ## Prerequisites
 
-- Node.js 20+
-- Yarn 4 (via Corepack)
-- PostgreSQL database
+- Node.js 26.13.1+ (26.x)
+- pnpm 12
 - API keys for video providers:
   - OpenAI API key (for Sora)
   - Google Cloud project with Vertex AI enabled (for Veo)
 
 ## Setup
 
-1. **Enable Corepack** (if not already enabled):
+Run all commands from the repository root.
+
+1. **Install dependencies**:
    ```bash
-   corepack enable
+   pnpm install
    ```
 
-2. **Install dependencies**:
+2. **Configure environment variables**:
+
+   Copy the server environment template, then fill in your provider credentials:
    ```bash
-   yarn install
+   cp packages/server/.env.example packages/server/.env
    ```
 
-3. **Configure environment variables**:
-
-   Create a `.env` file in the server root directory:
    ```env
    # Database
-   DATABASE_URL="postgresql://user:password@localhost:5432/video"
+   DB_FILE_NAME="sqlite.db"
 
    # OpenAI (Sora)
    OPENAI_API_KEY="sk-..."
@@ -80,27 +80,40 @@ video/
    GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
    ```
 
-4. **Set up the database**:
+3. **Set up the database**:
    ```bash
-   cd packages/server
-   npx prisma generate
-   npx prisma migrate dev
+   pnpm --filter @video-studio/server migrate
    ```
+
+   This creates a local database and applies the checked-in Drizzle migrations.
+   `DB_FILE_NAME` defaults to `sqlite.db`; relative paths resolve from
+   `packages/server` when using these scripts, so the default file is
+   `packages/server/sqlite.db`. No database service or credentials are required.
+
+The local database starts empty. Existing PostgreSQL data is not imported.
+Prompt search follows SQLite's `LIKE` behavior: case-insensitive matching applies
+to ASCII letters; non-ASCII characters are case-sensitive.
+
+After changing the Drizzle schema, generate and apply a migration:
+```bash
+pnpm --filter @video-studio/server db:generate
+pnpm --filter @video-studio/server migrate
+```
 
 ## Development
 
 Run both client and server in development mode:
 ```bash
-yarn start
+pnpm dev
 ```
 
 Or run them separately:
 ```bash
 # Client only (https://localhost:5173)
-yarn workspace @video/client start
+pnpm dev:client
 
 # Server only (http://localhost:3000)
-yarn workspace @video/server start
+pnpm dev:server
 ```
 
 The client dev server proxies `/api/*` requests to the server.
@@ -109,10 +122,13 @@ The client dev server proxies `/api/*` requests to the server.
 
 | Command | Description |
 |---------|-------------|
-| `yarn start` | Run client and server in development mode |
-| `yarn lint` | Lint and auto-fix all packages |
-| `yarn typecheck` | Type-check all packages |
-| `yarn workspace @video/client build` | Build client for production |
+| `pnpm dev` | Run client and server in development mode |
+| `pnpm lint:fix` | Lint and auto-fix all packages |
+| `pnpm typecheck` | Type-check all packages |
+| `pnpm test` | Run package tests |
+| `pnpm --filter @video-studio/client build` | Build client for production |
+| `pnpm --filter @video-studio/server db:generate` | Generate a Drizzle migration from schema changes |
+| `pnpm --filter @video-studio/server migrate` | Apply pending database migrations |
 
 ## API Endpoints
 
@@ -146,9 +162,9 @@ The client dev server proxies `/api/*` requests to the server.
 ## Tech Stack
 
 - **Frontend**: React 19, Vite 7, Tailwind CSS 4, Redux Toolkit, Radix UI
-- **Backend**: Fastify 5, Prisma 7, PostgreSQL
+- **Backend**: Fastify 5, Drizzle ORM, TursoDB (local SQLite-compatible database)
 - **Language**: TypeScript 5.9
-- **Package Manager**: Yarn 4 (workspaces)
+- **Package Manager**: pnpm 12 (workspaces)
 
 ## License
 

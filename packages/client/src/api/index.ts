@@ -14,7 +14,7 @@ import type {
   ExtendJobResponse,
   ListProvidersResponse,
   ProviderInfo,
-} from '@video/types';
+} from '@video-studio/types';
 
 export const api = createApi({
   reducerPath: 'api',

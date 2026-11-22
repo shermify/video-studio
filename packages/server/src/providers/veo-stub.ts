@@ -111,7 +111,7 @@ export class VeoAdapterStub implements ProviderAdapter {
 
   async extend(
     job: ProviderJobContext,
-    params: ExtendParams
+    _params: ExtendParams
   ): Promise<ProviderSubmitResult> {
     // Generate a new operation name for the extension
     const providerJobId = `operations/veo_extend_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

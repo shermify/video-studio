@@ -7,7 +7,7 @@ import type {
   ProviderJobContext,
   RemixParams,
 } from './types.js';
-import type { CanonicalJobStatus, CanonicalVideoAsset } from '@video/types';
+import type { CanonicalJobStatus } from '@video-studio/types';
 
 const SORA_API_BASE = 'https://api.openai.com/v1/videos';
 

@@ -1,13 +1,3 @@
-import { PrismaClient } from '../generated/prisma/client.js';
-import { PrismaPg } from '@prisma/adapter-pg';
-import pg from 'pg';
+import { drizzle } from 'drizzle-orm/tursodatabase/database';
 
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-const adapter = new PrismaPg(pool);
-
-export const prisma = new PrismaClient({
-  adapter,
-});
+export const db = drizzle(process.env.DB_FILE_NAME || 'sqlite.db');

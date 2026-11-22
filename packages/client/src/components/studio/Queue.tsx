@@ -6,7 +6,7 @@ import { useAppDispatch, useAppSelector } from '@/store';
 import { setFilters } from '@/features/jobs/jobsSlice';
 import { JobCard } from './JobCard';
 import { Search } from 'lucide-react';
-import type { CanonicalJobStatus } from '@video/types';
+import type { CanonicalJobStatus } from '@video-studio/types';
 
 type FilterTab = 'all' | CanonicalJobStatus;
 

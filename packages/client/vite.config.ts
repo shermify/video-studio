@@ -12,8 +12,6 @@ export default defineConfig({
       name: 'test',
       /** custom trust domains */
       domains: ['*.custom.com'],
-      /** custom certification directory */
-      certDir: '../../.yarn/cert',
     }),
   ],
   resolve: {

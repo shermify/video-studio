@@ -1,10 +1,11 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../db.js';
+import { and, count, desc, eq, lt, or, sql, type SQL } from 'drizzle-orm';
+import { db } from '../db.js';
+import { videoJobs, type NewVideoJob, type VideoJob } from '../schema.js';
 import { getAdapter } from '../providers/index.js';
 import type {
   CanonicalVideoJob,
-  CanonicalJobStatus,
   CreateJobResponse,
   ListJobsResponse,
   GetJobResponse,
@@ -12,9 +13,7 @@ import type {
   RefreshJobResponse,
   RemixJobResponse,
   ExtendJobResponse,
-  CanonicalVideoAsset,
-} from '@video/types';
-import type { VideoJob, Prisma } from '../../generated/prisma/client.js';
+} from '@video-studio/types';
 
 // Zod schemas for validation
 const createJobSchema = z.object({
@@ -57,16 +56,16 @@ const extendJobSchema = z.object({
 function toCanonicalJob(row: VideoJob): CanonicalVideoJob {
   return {
     id: row.id,
-    provider: row.provider as 'sora' | 'veo',
+    provider: row.provider,
     providerJobId: row.providerJobId,
-    status: row.status as CanonicalVideoJob['status'],
+    status: row.status,
     progressPct: row.progressPct,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     prompt: row.prompt,
-    params: (row.paramsJson as unknown as Record<string, unknown>) ?? {},
-    outputs: (row.outputsJson as unknown as CanonicalVideoAsset[]) ?? [],
-    error: row.errorJson as unknown as CanonicalVideoJob['error'],
+    params: row.paramsJson ?? {},
+    outputs: row.outputsJson ?? [],
+    error: row.errorJson,
     actions: {
       canDownload: row.status === 'succeeded',
       canDelete: true,
@@ -91,14 +90,15 @@ export async function jobsRoutes(fastify: FastifyInstance) {
 
     const { provider, prompt, mode, params, assets } = parsed.data;
 
-    const job = await prisma.videoJob.create({
-      data: {
+    const [job] = await db
+      .insert(videoJobs)
+      .values({
         provider,
         prompt,
         status: 'queued',
         paramsJson: { ...params, mode, assets },
-      },
-    });
+      })
+      .returning();
 
     const response: CreateJobResponse = {
       data: toCanonicalJob(job),
@@ -121,30 +121,51 @@ export async function jobsRoutes(fastify: FastifyInstance) {
 
     const { provider, status, q, limit, cursor } = parsed.data;
 
-    // Build where clause
-    const where: {
-      provider?: string;
-      status?: string;
-      prompt?: { contains: string; mode: 'insensitive' };
-      id?: { gt: string };
-    } = {};
+    const filters: SQL[] = [];
+    if (provider) filters.push(eq(videoJobs.provider, provider));
+    if (status) filters.push(eq(videoJobs.status, status));
+    if (q) {
+      // Treat SQL LIKE wildcards as literal prompt text.
+      const escapedQuery = q.replace(/[\\%_]/g, '\\$&');
+      filters.push(
+        sql`${videoJobs.prompt} like ${`%${escapedQuery}%`} escape ${'\\'}`
+      );
+    }
 
-    if (provider) where.provider = provider;
-    if (status) where.status = status;
-    if (q) where.prompt = { contains: q, mode: 'insensitive' };
-    if (cursor) where.id = { gt: cursor };
+    // Count all matching jobs, independently of the current page.
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(videoJobs)
+      .where(and(...filters));
 
-    // Get total count (without cursor for accurate total)
-    const countWhere = { ...where };
-    delete countWhere.id;
-    const total = await prisma.videoJob.count({ where: countWhere });
+    if (cursor) {
+      const cursorJob = await db
+        .select({ createdAt: videoJobs.createdAt, id: videoJobs.id })
+        .from(videoJobs)
+        .where(eq(videoJobs.id, cursor))
+        .get();
 
-    // Fetch jobs
-    const jobs = await prisma.videoJob.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: limit + 1, // fetch one extra to determine if there's a next page
-    });
+      // UUIDs do not sort chronologically. Match the full ordering, using the
+      // ID to disambiguate jobs created in the same millisecond.
+      filters.push(
+        cursorJob
+          ? or(
+              lt(videoJobs.createdAt, cursorJob.createdAt),
+              and(
+                eq(videoJobs.createdAt, cursorJob.createdAt),
+                lt(videoJobs.id, cursorJob.id)
+              )
+            )!
+          : sql`0`
+      );
+    }
+
+    const jobs = await db
+      .select()
+      .from(videoJobs)
+      .where(and(...filters))
+      .orderBy(desc(videoJobs.createdAt), desc(videoJobs.id))
+      .limit(limit + 1);
 
     const hasMore = jobs.length > limit;
     const resultJobs = hasMore ? jobs.slice(0, limit) : jobs;
@@ -166,9 +187,11 @@ export async function jobsRoutes(fastify: FastifyInstance) {
   fastify.get('/jobs/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    const job = await prisma.videoJob.findUnique({
-      where: { id },
-    });
+    const job = await db
+      .select()
+      .from(videoJobs)
+      .where(eq(videoJobs.id, id))
+      .get();
 
     if (!job) {
       return reply.status(404).send({
@@ -190,9 +213,11 @@ export async function jobsRoutes(fastify: FastifyInstance) {
   fastify.delete('/jobs/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    const job = await prisma.videoJob.findUnique({
-      where: { id },
-    });
+    const job = await db
+      .select()
+      .from(videoJobs)
+      .where(eq(videoJobs.id, id))
+      .get();
 
     if (!job) {
       return reply.status(404).send({
@@ -203,9 +228,7 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       });
     }
 
-    await prisma.videoJob.delete({
-      where: { id },
-    });
+    await db.delete(videoJobs).where(eq(videoJobs.id, id));
 
     const response: DeleteJobResponse = {
       data: { id, deleted: true },
@@ -218,9 +241,11 @@ export async function jobsRoutes(fastify: FastifyInstance) {
   fastify.post('/jobs/:id/refresh', async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    const job = await prisma.videoJob.findUnique({
-      where: { id },
-    });
+    const job = await db
+      .select()
+      .from(videoJobs)
+      .where(eq(videoJobs.id, id))
+      .get();
 
     if (!job) {
       return reply.status(404).send({
@@ -246,23 +271,24 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       id: job.id,
       providerJobId: job.providerJobId,
       prompt: job.prompt,
-      params: (job.paramsJson as unknown as Record<string, unknown>) ?? {},
-      status: job.status as CanonicalJobStatus,
-      outputs: (job.outputsJson as unknown as CanonicalVideoAsset[]) ?? [],
+      params: job.paramsJson ?? {},
+      status: job.status,
+      outputs: job.outputsJson ?? [],
     };
 
     // If job hasn't been submitted yet, submit it first
     if (!job.providerJobId) {
       const submitResult = await adapter.submit(jobContext);
 
-      const updatedJob = await prisma.videoJob.update({
-        where: { id },
-        data: {
+      const [updatedJob] = await db
+        .update(videoJobs)
+        .set({
           providerJobId: submitResult.providerJobId,
           status: submitResult.status,
           progressPct: submitResult.progressPct,
-        },
-      });
+        })
+        .where(eq(videoJobs.id, id))
+        .returning();
 
       const response: RefreshJobResponse = {
         data: toCanonicalJob(updatedJob),
@@ -274,24 +300,23 @@ export async function jobsRoutes(fastify: FastifyInstance) {
     const refreshResult = await adapter.refresh(jobContext);
 
     // Build update data, only including changed fields
-    const updateData: Prisma.VideoJobUpdateInput = {
+    const updateData: Partial<NewVideoJob> = {
       status: refreshResult.status,
       progressPct: refreshResult.progressPct,
     };
 
     if (refreshResult.outputs) {
-      updateData.outputsJson =
-        refreshResult.outputs as unknown as Prisma.InputJsonValue;
+      updateData.outputsJson = refreshResult.outputs;
     }
     if (refreshResult.error) {
-      updateData.errorJson =
-        refreshResult.error as unknown as Prisma.InputJsonValue;
+      updateData.errorJson = refreshResult.error;
     }
 
-    const updatedJob = await prisma.videoJob.update({
-      where: { id },
-      data: updateData,
-    });
+    const [updatedJob] = await db
+      .update(videoJobs)
+      .set(updateData)
+      .where(eq(videoJobs.id, id))
+      .returning();
 
     const response: RefreshJobResponse = {
       data: toCanonicalJob(updatedJob),
@@ -305,9 +330,11 @@ export async function jobsRoutes(fastify: FastifyInstance) {
     const { asset } = request.query as { asset?: string };
     const assetIndex = asset ? parseInt(asset, 10) : 0;
 
-    const job = await prisma.videoJob.findUnique({
-      where: { id },
-    });
+    const job = await db
+      .select()
+      .from(videoJobs)
+      .where(eq(videoJobs.id, id))
+      .get();
 
     if (!job) {
       return reply.status(404).send({
@@ -333,9 +360,9 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       id: job.id,
       providerJobId: job.providerJobId,
       prompt: job.prompt,
-      params: (job.paramsJson as unknown as Record<string, unknown>) ?? {},
-      status: job.status as CanonicalJobStatus,
-      outputs: (job.outputsJson as unknown as CanonicalVideoAsset[]) ?? [],
+      params: job.paramsJson ?? {},
+      status: job.status,
+      outputs: job.outputsJson ?? [],
     };
 
     const contentResult = await adapter.content(jobContext, assetIndex);
@@ -371,9 +398,11 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const sourceJob = await prisma.videoJob.findUnique({
-      where: { id },
-    });
+    const sourceJob = await db
+      .select()
+      .from(videoJobs)
+      .where(eq(videoJobs.id, id))
+      .get();
 
     if (!sourceJob) {
       return reply.status(404).send({
@@ -427,11 +456,9 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       id: sourceJob.id,
       providerJobId: sourceJob.providerJobId,
       prompt: sourceJob.prompt,
-      params:
-        (sourceJob.paramsJson as unknown as Record<string, unknown>) ?? {},
-      status: sourceJob.status as CanonicalJobStatus,
-      outputs:
-        (sourceJob.outputsJson as unknown as CanonicalVideoAsset[]) ?? [],
+      params: sourceJob.paramsJson ?? {},
+      status: sourceJob.status,
+      outputs: sourceJob.outputsJson ?? [],
     };
 
     // Call the provider's remix endpoint
@@ -440,21 +467,22 @@ export async function jobsRoutes(fastify: FastifyInstance) {
     });
 
     // Create a new job record for the remix
-    const remixJob = await prisma.videoJob.create({
-      data: {
+    const [remixJob] = await db
+      .insert(videoJobs)
+      .values({
         provider: sourceJob.provider,
         providerJobId: remixResult.providerJobId,
         prompt: parsed.data.prompt || sourceJob.prompt,
         status: remixResult.status,
         progressPct: remixResult.progressPct,
         paramsJson: {
-          ...(sourceJob.paramsJson as Record<string, unknown>),
+          ...sourceJob.paramsJson,
           mode: 'remix',
           sourceJobId: sourceJob.id,
           sourceProviderJobId: sourceJob.providerJobId,
         },
-      },
-    });
+      })
+      .returning();
 
     const response: RemixJobResponse = {
       data: toCanonicalJob(remixJob),
@@ -477,9 +505,11 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const sourceJob = await prisma.videoJob.findUnique({
-      where: { id },
-    });
+    const sourceJob = await db
+      .select()
+      .from(videoJobs)
+      .where(eq(videoJobs.id, id))
+      .get();
 
     if (!sourceJob) {
       return reply.status(404).send({
@@ -533,11 +563,9 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       id: sourceJob.id,
       providerJobId: sourceJob.providerJobId,
       prompt: sourceJob.prompt,
-      params:
-        (sourceJob.paramsJson as unknown as Record<string, unknown>) ?? {},
-      status: sourceJob.status as CanonicalJobStatus,
-      outputs:
-        (sourceJob.outputsJson as unknown as CanonicalVideoAsset[]) ?? [],
+      params: sourceJob.paramsJson ?? {},
+      status: sourceJob.status,
+      outputs: sourceJob.outputsJson ?? [],
     };
 
     // Call the provider's extend endpoint
@@ -548,22 +576,23 @@ export async function jobsRoutes(fastify: FastifyInstance) {
     });
 
     // Create a new job record for the extension
-    const extendJob = await prisma.videoJob.create({
-      data: {
+    const [extendJob] = await db
+      .insert(videoJobs)
+      .values({
         provider: sourceJob.provider,
         providerJobId: extendResult.providerJobId,
         prompt: parsed.data.prompt || sourceJob.prompt,
         status: extendResult.status,
         progressPct: extendResult.progressPct,
         paramsJson: {
-          ...(sourceJob.paramsJson as Record<string, unknown>),
+          ...sourceJob.paramsJson,
           ...parsed.data.params,
           mode: 'extend',
           sourceJobId: sourceJob.id,
           sourceProviderJobId: sourceJob.providerJobId,
         },
-      },
-    });
+      })
+      .returning();
 
     const response: ExtendJobResponse = {
       data: toCanonicalJob(extendJob),

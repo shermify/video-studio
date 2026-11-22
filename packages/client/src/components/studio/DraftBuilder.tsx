@@ -29,7 +29,7 @@ import {
 import { ImageDropZone } from './ImageDropZone';
 import { useListProvidersQuery, useCreateJobMutation } from '@/api';
 import { Loader2, ChevronDown, Sparkles } from 'lucide-react';
-import type { ProviderId } from '@video/types';
+import type { ProviderId } from '@video-studio/types';
 import { cn } from '@/lib/utils';
 
 // Prompt helper chips for quick prompt additions

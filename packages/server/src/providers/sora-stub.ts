@@ -106,7 +106,7 @@ export class SoraAdapterStub implements ProviderAdapter {
 
   async remix(
     job: ProviderJobContext,
-    params: RemixParams
+    _params: RemixParams
   ): Promise<ProviderSubmitResult> {
     // Generate a new provider job ID for the remix
     const providerJobId = `sora_remix_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

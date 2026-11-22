@@ -1,4 +1,4 @@
-import type { CanonicalJobStatus, CanonicalVideoAsset } from '@video/types';
+import type { CanonicalJobStatus, CanonicalVideoAsset } from '@video-studio/types';
 
 /**
  * Result from submitting a job to a provider

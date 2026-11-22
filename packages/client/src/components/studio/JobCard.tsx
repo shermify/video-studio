@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import type { CanonicalVideoJob } from '@video/types';
+import type { CanonicalVideoJob } from '@video-studio/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
