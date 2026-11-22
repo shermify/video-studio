@@ -1,0 +1,6 @@
+# pnpm
+/build-slices-and-selectors
+/design-state-ownership
+/handle-side-effects
+/modern-redux
+# pnpm end

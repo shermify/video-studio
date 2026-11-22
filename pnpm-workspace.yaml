@@ -1,0 +1,15 @@
+packages:
+  - 'packages/*'
+allowBuilds:
+  '@google/genai': true
+  '@prisma/engines': true
+  esbuild: true
+  msw: true
+  prisma: true
+  protobufjs: true
+permissions:
+  '@reduxjs/toolkit':
+    skills: [modern-redux, build-slices-and-selectors, design-state-ownership, handle-side-effects]
+skills:
+  dirs:
+    - .agents/skills
